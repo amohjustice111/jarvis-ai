@@ -17,7 +17,7 @@ function createWindow() {
     }
   });
 
-  const appUrl = process.env.JARVIS_APP_URL || "https://jarvis-ai.vercel.app";
+  const appUrl = process.env.JARVIS_APP_URL || "https://jarvis-ai-justiceamohadjei-6980.vercel.app";
   win.loadURL(appUrl);
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) shell.openExternal(url);
