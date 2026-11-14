@@ -5,11 +5,12 @@ import { Activity, AudioLines, Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Trash2,
 
 type Message = { role: "user" | "assistant"; content: string };
 type SpeechRecognitionResult = { transcript: string };
-type SpeechRecognitionEvent = Event & { results: ArrayLike<ArrayLike<SpeechRecognitionResult>> };
+type SpeechRecognitionEvent = Event & { resultIndex: number; results: ArrayLike<ArrayLike<SpeechRecognitionResult & { isFinal: boolean }>> };
+type SpeechRecognitionErrorEvent = Event & { error?: string };
 type SpeechRecognitionLike = {
   lang: string; continuous: boolean; interimResults: boolean;
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: (() => void) | null; onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null; onend: (() => void) | null;
   start: () => void; stop: () => void;
 };
 declare global { interface Window { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike } }
@@ -19,11 +20,14 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  const [alwaysListening, setAlwaysListening] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const [status, setStatus] = useState("SYSTEM ONLINE");
   const [error, setError] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const recognition = useRef<SpeechRecognitionLike | null>(null);
+  const alwaysListeningRef = useRef(false);
+  const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,6 +54,12 @@ export default function Home() {
   }, [messages, historyLoaded]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
+
+  useEffect(() => () => {
+    alwaysListeningRef.current = false;
+    if (restartTimer.current) clearTimeout(restartTimer.current);
+    recognition.current?.stop();
+  }, []);
 
   function clearConversation() {
     if (busy) return;
@@ -91,6 +101,10 @@ export default function Home() {
   }
 
   function toggleMic() {
+    if (alwaysListeningRef.current) {
+      setError("Pause always listening before using one-time voice input.");
+      return;
+    }
     if (listening) { recognition.current?.stop(); setListening(false); return; }
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Speech) { setError("Voice input is not supported in this browser. Try Chrome or Edge."); return; }
@@ -105,6 +119,84 @@ export default function Home() {
     instance.onend = () => setListening(false);
     recognition.current = instance;
     try { instance.start(); setListening(true); setError(""); } catch { setError("Could not start the microphone."); }
+  }
+
+  function toggleAlwaysListening() {
+    if (alwaysListeningRef.current) {
+      alwaysListeningRef.current = false;
+      setAlwaysListening(false);
+      setListening(false);
+      if (restartTimer.current) clearTimeout(restartTimer.current);
+      recognition.current?.stop();
+      setStatus("SYSTEM ONLINE");
+      return;
+    }
+
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) {
+      setError("Always listening is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+
+    const instance = new Speech();
+    instance.lang = "en-US";
+    instance.continuous = true;
+    instance.interimResults = false;
+    instance.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (!result?.[0] || !result.isFinal) continue;
+        const heard = result[0].transcript.trim();
+        const wakeMatch = heard.match(/\\b(?:hey\\s+)?jarvis\\b[:,.!]?\\s*/i);
+        if (!wakeMatch) continue;
+        const command = heard.slice(wakeMatch[0].length).trim();
+        if (command) {
+          void sendMessage(command);
+        } else {
+          speak("I'm listening. How can I help?");
+          setStatus("JARVIS IS LISTENING");
+        }
+      }
+    };
+    instance.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        alwaysListeningRef.current = false;
+        setAlwaysListening(false);
+        setListening(false);
+        setStatus("MICROPHONE PERMISSION NEEDED");
+        setError("Microphone permission was denied. Allow microphone access in your browser's site settings, then try again.");
+      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+        setError("Voice recognition paused. Check your connection and microphone permission.");
+      }
+    };
+    instance.onend = () => {
+      if (!alwaysListeningRef.current) {
+        setListening(false);
+        return;
+      }
+      if (restartTimer.current) clearTimeout(restartTimer.current);
+      restartTimer.current = setTimeout(() => {
+        if (!alwaysListeningRef.current) return;
+        try { instance.start(); } catch { /* The browser may still be closing the previous recognition session. */ }
+      }, 700);
+    };
+
+    recognition.current?.stop();
+    recognition.current = instance;
+    alwaysListeningRef.current = true;
+    setAlwaysListening(true);
+    setListening(true);
+    setError("");
+    setStatus("WAKE WORD ACTIVE");
+    try {
+      instance.start();
+    } catch {
+      alwaysListeningRef.current = false;
+      setAlwaysListening(false);
+      setListening(false);
+      setError("Could not start always listening. Check microphone permission and try again.");
+      setStatus("SYSTEM ONLINE");
+    }
   }
 
   return (
@@ -125,7 +217,7 @@ export default function Home() {
             <div className="core-center"><AudioLines size={43} strokeWidth={1.25}/><span>J</span></div>
             <div className="orbit orbit-a"/><div className="orbit orbit-b"/>
           </div>
-          <div className="core-caption">{listening ? "LISTENING" : busy ? "THINKING" : "READY WHEN YOU ARE"}</div>
+          <div className="core-caption">{alwaysListening ? "AWAITING HEY JARVIS" : listening ? "LISTENING" : busy ? "THINKING" : "READY WHEN YOU ARE"}</div>
         </div>
         <div className="metrics">
           <div><span><Activity size={14}/> SYSTEM</span><strong>{status}</strong></div>
@@ -136,7 +228,7 @@ export default function Home() {
       </section>
 
       <section className="console">
-        <div className="console-head"><div><span className="console-light"/> JARVIS CONSOLE</div><span>ENCRYPTED CHANNEL <ShieldCheck size={13}/></span><button type="button" className="clear-button" onClick={clearConversation} disabled={busy} title="Clear saved conversation"><Trash2 size={13}/> CLEAR CHAT</button></div>
+        <div className="console-head"><div><span className="console-light"/> JARVIS CONSOLE</div><span>ENCRYPTED CHANNEL <ShieldCheck size={13}/></span><button type="button" className={alwaysListening ? "always-button active" : "always-button"} onClick={toggleAlwaysListening}>{alwaysListening ? "PAUSE ALWAYS LISTENING" : "ENABLE ALWAYS LISTENING"}</button><button type="button" className="clear-button" onClick={clearConversation} disabled={busy} title="Clear saved conversation"><Trash2 size={13}/> CLEAR CHAT</button></div>
         <div className="conversation">
           {messages.length === 0 && <div className="welcome"><Bot size={25}/><div><strong>Good day. I am JARVIS.</strong><p>Gemini intelligence is standing by. What can I help you with?</p></div></div>}
           {messages.map((message, index) => <div className={`message ${message.role}`} key={index}><span>{message.role === "user" ? "YOU" : "JARVIS"}</span><p>{message.content}</p></div>)}
@@ -145,11 +237,11 @@ export default function Home() {
           <div ref={bottom}/>
         </div>
         <form className="composer" onSubmit={e => { e.preventDefault(); void sendMessage(); }}>
-          <button type="button" className={listening ? "mic-button listening" : "mic-button"} onClick={toggleMic} aria-label="Speak to JARVIS">{listening ? <MicOff size={19}/> : <Mic size={19}/>}</button>
+          <button type="button" className={listening && !alwaysListening ? "mic-button listening" : "mic-button"} onClick={toggleMic} aria-label="Speak to JARVIS">{listening ? <MicOff size={19}/> : <Mic size={19}/>}</button>
           <input value={input} onChange={e => setInput(e.target.value)} placeholder="Message JARVIS or use your voice..." aria-label="Message JARVIS"/>
           <button className="send-button" type="submit" disabled={busy || !input.trim()} aria-label="Send message"><Send size={18}/></button>
         </form>
-        <div className="console-foot"><span><Zap size={12}/> POWERED BY GOOGLE GEMINI</span><span>VOICE INPUT REQUIRES MICROPHONE PERMISSION</span></div>
+        <div className="console-foot"><span><Zap size={12}/> POWERED BY GOOGLE GEMINI</span><span>{alwaysListening ? "SAY HEY JARVIS TO GIVE A COMMAND" : "MICROPHONE PERMISSION REQUIRED"}</span></div>
       </section>
       <footer>J.A.R.V.I.S. <span>•</span> JUST A RATHER VERY INTELLIGENT SYSTEM <span>•</span> PERSONAL ASSISTANT</footer>
     </main>
