@@ -25,6 +25,9 @@ export default function Home() {
   const [status, setStatus] = useState("SYSTEM ONLINE");
   const [error, setError] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [caption, setCaption] = useState("");
+  const captionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recognition = useRef<SpeechRecognitionLike | null>(null);
   const alwaysListeningRef = useRef(false);
   const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,17 +69,32 @@ export default function Home() {
     setMessages([]);
     setError("");
     window.speechSynthesis?.cancel();
+    setSpeaking(false);
+    setCaption("");
+    if (captionTimer.current) clearTimeout(captionTimer.current);
   }
 
   function speak(text: string) {
     if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
+    if (captionTimer.current) clearTimeout(captionTimer.current);
+    setCaption(text);
+    setSpeaking(false);
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-US";
     utterance.rate = 0.96;
     const voices = window.speechSynthesis.getVoices();
     const male = voices.find(v => /male|david|mark|guy|daniel|alex/i.test(v.name));
     if (male) utterance.voice = male;
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => {
+      setSpeaking(false);
+      captionTimer.current = setTimeout(() => setCaption(""), 1300);
+    };
+    utterance.onerror = () => {
+      setSpeaking(false);
+      captionTimer.current = setTimeout(() => setCaption(""), 1300);
+    };
     window.speechSynthesis.speak(utterance);
   }
 
@@ -211,13 +229,22 @@ export default function Home() {
         <div className="eyebrow"><span/> PERSONAL ARTIFICIAL INTELLIGENCE</div>
         <h1>At your service<span>.</span></h1>
         <p className="subtitle">Your world, intelligently connected.</p>
-        <div className="core-wrap">
-          <div className={busy || listening ? "core active" : "core"}>
-            <div className="core-ring ring-one"/><div className="core-ring ring-two"/><div className="core-ring ring-three"/>
-            <div className="core-center"><AudioLines size={43} strokeWidth={1.25}/><span>J</span></div>
-            <div className="orbit orbit-a"/><div className="orbit orbit-b"/>
+        <div className="video-call-wrap">
+          <div className="video-call-top"><span><i className="live-dot"/> LIVE ASSISTANT LINK</span><span>JARVIS · PRIVATE SESSION</span></div>
+          <div className={`video-stage ${speaking ? "speaking" : ""} ${busy ? "processing" : ""}`}>
+            <div className="avatar-halo"/>
+            <div className="cinematic-avatar" aria-label="Animated illustrated male JARVIS avatar">
+              <div className="avatar-back-glow"/>
+              <div className="avatar-body"><div className="avatar-jacket-left"/><div className="avatar-shirt"/><div className="avatar-jacket-right"/><div className="avatar-neck"/></div>
+              <div className="avatar-head"><div className="avatar-hair"/><div className="avatar-ear left"/><div className="avatar-ear right"/><div className="avatar-brow left"/><div className="avatar-brow right"/><div className="avatar-eye left"/><div className="avatar-eye right"/><div className="avatar-nose"/><div className="avatar-mouth"/></div>
+              <div className="avatar-phone"><span/><i/><b/></div>
+              <div className="avatar-hand"/>
+            </div>
+            <div className="avatar-nameplate"><span className="avatar-online"/> JARVIS <small>AI ASSISTANT</small></div>
+            <div className={caption ? "live-caption visible" : "live-caption"} aria-live="polite">{caption}</div>
+            <div className="video-status">{speaking ? "JARVIS IS SPEAKING" : listening || alwaysListening ? "LISTENING FOR YOUR VOICE" : busy ? "THINKING…" : "READY TO CONNECT"}</div>
           </div>
-          <div className="core-caption">{alwaysListening ? "AWAITING HEY JARVIS" : listening ? "LISTENING" : busy ? "THINKING" : "READY WHEN YOU ARE"}</div>
+          <div className="video-call-controls"><span className="call-control"><Mic size={15}/></span><span className="call-label">VOICE SESSION</span><span className="call-control end-call"><Volume2 size={15}/></span></div>
         </div>
         <div className="metrics">
           <div><span><Activity size={14}/> SYSTEM</span><strong>{status}</strong></div>
