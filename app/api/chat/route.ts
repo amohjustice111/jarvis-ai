@@ -29,7 +29,7 @@ export async function POST(request: Request) {
 
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-5-5",
       max_tokens: 1200,
       system: "You are J.A.R.V.I.S., a capable, warm, precise personal AI assistant inspired by a futuristic cinematic assistant. Address the user respectfully. Be clear, useful, and honest about limitations. Ask before taking actions that affect files, accounts, devices, or other people. Never claim to have performed an action you have not performed.",
       messages: safeMessages
