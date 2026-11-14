@@ -147,7 +147,7 @@ export default function Home() {
         const result = event.results[i];
         if (!result?.[0] || !result.isFinal) continue;
         const heard = result[0].transcript.trim();
-        const wakeMatch = heard.match(/\\b(?:hey\\s+)?jarvis\\b[:,.!]?\\s*/i);
+        const wakeMatch = heard.match(/\b(?:hey\s+)?jarvis\b[:,.!]?\s*/i);
         if (!wakeMatch) continue;
         const command = heard.slice(wakeMatch[0].length).trim();
         if (command) {
