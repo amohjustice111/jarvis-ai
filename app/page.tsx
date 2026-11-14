@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, AudioLines, Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Volume2, VolumeX, Wifi, Zap } from "lucide-react";
+import { Activity, AudioLines, Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Trash2, Volume2, VolumeX, Wifi, Zap } from "lucide-react";
 
 type Message = { role: "user" | "assistant"; content: string };
 type SpeechRecognitionResult = { transcript: string };
@@ -22,10 +22,41 @@ export default function Home() {
   const [voiceOn, setVoiceOn] = useState(true);
   const [status, setStatus] = useState("SYSTEM ONLINE");
   const [error, setError] = useState("");
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const recognition = useRef<SpeechRecognitionLike | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("jarvis-chat-history");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setMessages(parsed.filter((item): item is Message =>
+            item && (item.role === "user" || item.role === "assistant") && typeof item.content === "string"
+          ).slice(-100));
+        }
+      }
+    } catch {
+      localStorage.removeItem("jarvis-chat-history");
+    } finally {
+      setHistoryLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!historyLoaded) return;
+    try { localStorage.setItem("jarvis-chat-history", JSON.stringify(messages.slice(-100))); } catch { /* Storage may be unavailable. */ }
+  }, [messages, historyLoaded]);
+
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
+
+  function clearConversation() {
+    if (busy) return;
+    setMessages([]);
+    setError("");
+    window.speechSynthesis?.cancel();
+  }
 
   function speak(text: string) {
     if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -79,7 +110,7 @@ export default function Home() {
   return (
     <main className="shell">
       <header className="topbar">
-        <a className="brand" href="#"><span className="brand-mark"><AudioLines size={21}/></span><span>J.A.R.V.I.S.<small>CLAUDE INTELLIGENCE</small></span></a>
+        <a className="brand" href="#"><span className="brand-mark"><AudioLines size={21}/></span><span>J.A.R.V.I.S.<small>GEMINI INTELLIGENCE</small></span></a>
         <div className="top-status"><span className="pulse-dot"/> SECURE SESSION <i/> <span className="online-text">ONLINE</span></div>
         <button className="icon-button" aria-label={voiceOn ? "Mute voice" : "Enable voice"} onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) window.speechSynthesis?.cancel(); }} title="Voice output">{voiceOn ? <Volume2 size={18}/> : <VolumeX size={18}/>}</button>
       </header>
@@ -98,16 +129,16 @@ export default function Home() {
         </div>
         <div className="metrics">
           <div><span><Activity size={14}/> SYSTEM</span><strong>{status}</strong></div>
-          <div><span><Cpu size={14}/> INTELLIGENCE</span><strong>CLAUDE AI</strong></div>
+          <div><span><Cpu size={14}/> INTELLIGENCE</span><strong>GEMINI AI</strong></div>
           <div><span><ShieldCheck size={14}/> SECURITY</span><strong>KEY PROTECTED</strong></div>
           <div><span><Wifi size={14}/> NETWORK</span><strong>CONNECTED</strong></div>
         </div>
       </section>
 
       <section className="console">
-        <div className="console-head"><div><span className="console-light"/> JARVIS CONSOLE</div><span>ENCRYPTED CHANNEL <ShieldCheck size={13}/></span></div>
+        <div className="console-head"><div><span className="console-light"/> JARVIS CONSOLE</div><span>ENCRYPTED CHANNEL <ShieldCheck size={13}/></span><button type="button" className="clear-button" onClick={clearConversation} disabled={busy} title="Clear saved conversation"><Trash2 size={13}/> CLEAR CHAT</button></div>
         <div className="conversation">
-          {messages.length === 0 && <div className="welcome"><Bot size={25}/><div><strong>Good day. I am JARVIS.</strong><p>Claude intelligence is standing by. What can I help you with?</p></div></div>}
+          {messages.length === 0 && <div className="welcome"><Bot size={25}/><div><strong>Good day. I am JARVIS.</strong><p>Gemini intelligence is standing by. What can I help you with?</p></div></div>}
           {messages.map((message, index) => <div className={`message ${message.role}`} key={index}><span>{message.role === "user" ? "YOU" : "JARVIS"}</span><p>{message.content}</p></div>)}
           {busy && <div className="thinking"><span/><span/><span/> JARVIS IS THINKING</div>}
           {error && <div className="error-msg">{error}</div>}
@@ -118,7 +149,7 @@ export default function Home() {
           <input value={input} onChange={e => setInput(e.target.value)} placeholder="Message JARVIS or use your voice..." aria-label="Message JARVIS"/>
           <button className="send-button" type="submit" disabled={busy || !input.trim()} aria-label="Send message"><Send size={18}/></button>
         </form>
-        <div className="console-foot"><span><Zap size={12}/> POWERED BY ANTHROPIC CLAUDE</span><span>VOICE INPUT REQUIRES MICROPHONE PERMISSION</span></div>
+        <div className="console-foot"><span><Zap size={12}/> POWERED BY GOOGLE GEMINI</span><span>VOICE INPUT REQUIRES MICROPHONE PERMISSION</span></div>
       </section>
       <footer>J.A.R.V.I.S. <span>•</span> JUST A RATHER VERY INTELLIGENT SYSTEM <span>•</span> PERSONAL ASSISTANT</footer>
     </main>
