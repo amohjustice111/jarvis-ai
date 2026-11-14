@@ -171,7 +171,7 @@ export default function Home() {
 
   return (
     <main className="call-screen">
-      <img className="jarvis-photo" src="/file_00000000c57471f4b0fdb5e4167fee7f.png" alt="JARVIS" />
+      <img className="jarvis-photo" src="/jarvis-avatar.webp" alt="JARVIS" />
       <div className="photo-shade" />
       <div className="call-topline"><span className="call-live-dot" /> JARVIS <span className="call-private">PRIVATE VIDEO SESSION</span></div>
       <div className="caption-area" aria-live="polite" aria-atomic="true">
