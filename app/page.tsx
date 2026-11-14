@@ -5,7 +5,8 @@ import { Activity, AudioLines, Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Trash2,
 
 type Message = { role: "user" | "assistant"; content: string };
 type SpeechRecognitionResult = { transcript: string };
-type SpeechRecognitionEvent = Event & { resultIndex: number; results: ArrayLike<ArrayLike<SpeechRecognitionResult & { isFinal: boolean }>> };
+type SpeechRecognitionResultItem = ArrayLike<SpeechRecognitionResult> & { isFinal: boolean };
+type SpeechRecognitionEvent = Event & { resultIndex: number; results: ArrayLike<SpeechRecognitionResultItem> };
 type SpeechRecognitionErrorEvent = Event & { error?: string };
 type SpeechRecognitionLike = {
   lang: string; continuous: boolean; interimResults: boolean;
