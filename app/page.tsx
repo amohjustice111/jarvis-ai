@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, AudioLines, Bot, Cpu, Mic, MicOff, Send, ShieldCheck, Trash2, Volume2, VolumeX, Wifi, Zap } from "lucide-react";
+import { Mic, MicOff } from "lucide-react";
 
 type Message = { role: "user" | "assistant"; content: string };
 type SpeechRecognitionResult = { transcript: string };
@@ -16,94 +16,85 @@ type SpeechRecognitionLike = {
 };
 declare global { interface Window { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike } }
 
+const captionColors = ["#72e7ff", "#ffd166", "#ff8fab", "#b8f2a1", "#c7a6ff", "#ffad66"];
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
-  const [alwaysListening, setAlwaysListening] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(true);
-  const [status, setStatus] = useState("SYSTEM ONLINE");
-  const [error, setError] = useState("");
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [caption, setCaption] = useState("");
-  const captionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [captionColor, setCaptionColor] = useState(captionColors[0]);
+  const [error, setError] = useState("");
   const recognition = useRef<SpeechRecognitionLike | null>(null);
-  const alwaysListeningRef = useRef(false);
+  const listeningRef = useRef(false);
   const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const captionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wordIndex = useRef(0);
+  const busyRef = useRef(false);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem("jarvis-chat-history");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setMessages(parsed.filter((item): item is Message =>
-            item && (item.role === "user" || item.role === "assistant") && typeof item.content === "string"
-          ).slice(-100));
-        }
+        if (Array.isArray(parsed)) setMessages(parsed.filter((item): item is Message =>
+          item && (item.role === "user" || item.role === "assistant") && typeof item.content === "string"
+        ).slice(-100));
       }
-    } catch {
-      localStorage.removeItem("jarvis-chat-history");
-    } finally {
-      setHistoryLoaded(true);
-    }
+    } catch { localStorage.removeItem("jarvis-chat-history"); }
   }, []);
 
   useEffect(() => {
-    if (!historyLoaded) return;
     try { localStorage.setItem("jarvis-chat-history", JSON.stringify(messages.slice(-100))); } catch { /* Storage may be unavailable. */ }
-  }, [messages, historyLoaded]);
-
-  useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
+  }, [messages]);
 
   useEffect(() => () => {
-    alwaysListeningRef.current = false;
+    listeningRef.current = false;
     if (restartTimer.current) clearTimeout(restartTimer.current);
+    if (captionTimer.current) clearTimeout(captionTimer.current);
     recognition.current?.stop();
+    window.speechSynthesis?.cancel();
   }, []);
 
-  function clearConversation() {
-    if (busy) return;
-    setMessages([]);
-    setError("");
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
-    setCaption("");
-    if (captionTimer.current) clearTimeout(captionTimer.current);
-  }
-
   function speak(text: string) {
-    if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     if (captionTimer.current) clearTimeout(captionTimer.current);
-    setCaption(text);
-    setSpeaking(false);
+    setCaption("");
+    wordIndex.current = 0;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-US";
     utterance.rate = 0.96;
     const voices = window.speechSynthesis.getVoices();
     const male = voices.find(v => /male|david|mark|guy|daniel|alex/i.test(v.name));
     if (male) utterance.voice = male;
-    utterance.onstart = () => setSpeaking(true);
+    utterance.onboundary = (event) => {
+      if (event.name !== "word") return;
+      const remaining = text.slice(event.charIndex);
+      const nextWord = remaining.match(/^[\s,.;:!?—-]*([^\s,.;:!?—-]+)/)?.[1];
+      if (!nextWord) return;
+      const color = captionColors[wordIndex.current % captionColors.length];
+      wordIndex.current += 1;
+      setCaptionColor(color);
+      setCaption(nextWord);
+    };
     utterance.onend = () => {
-      setSpeaking(false);
-      captionTimer.current = setTimeout(() => setCaption(""), 1300);
+      captionTimer.current = setTimeout(() => setCaption(""), 900);
     };
     utterance.onerror = () => {
-      setSpeaking(false);
-      captionTimer.current = setTimeout(() => setCaption(""), 1300);
+      captionTimer.current = setTimeout(() => setCaption(""), 900);
     };
     window.speechSynthesis.speak(utterance);
   }
 
-  async function sendMessage(text = input) {
+  async function sendMessage(text: string) {
     const value = text.trim();
-    if (!value || busy) return;
+    if (!value || busyRef.current) return;
     const next: Message[] = [...messages, { role: "user", content: value }];
-    setMessages(next); setInput(""); setBusy(true); setError(""); setStatus("PROCESSING REQUEST");
+    setMessages(next);
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
     try {
       const response = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -111,52 +102,31 @@ export default function Home() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Connection error");
-      const updated = [...next, { role: "assistant" as const, content: data.answer }];
-      setMessages(updated); speak(data.answer); setStatus("SYSTEM ONLINE");
+      const answer = String(data.answer || "I am sorry, I could not prepare a reply.");
+      setMessages([...next, { role: "assistant", content: answer }]);
+      speak(answer);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-      setStatus("ATTENTION REQUIRED");
-    } finally { setBusy(false); }
-  }
-
-  function toggleMic() {
-    if (alwaysListeningRef.current) {
-      setError("Pause always listening before using one-time voice input.");
-      return;
+      setError(err instanceof Error ? err.message : "JARVIS could not connect. Please try again.");
+      speak("I am sorry. I could not connect just now. Please try again.");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
-    if (listening) { recognition.current?.stop(); setListening(false); return; }
-    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Speech) { setError("Voice input is not supported in this browser. Try Chrome or Edge."); return; }
-    const instance = new Speech();
-    instance.lang = "en-US"; instance.continuous = false; instance.interimResults = false;
-    instance.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript || "";
-      setInput(transcript);
-      if (transcript) void sendMessage(transcript);
-    };
-    instance.onerror = () => { setListening(false); setError("Microphone access failed. Check your browser permission."); };
-    instance.onend = () => setListening(false);
-    recognition.current = instance;
-    try { instance.start(); setListening(true); setError(""); } catch { setError("Could not start the microphone."); }
   }
 
-  function toggleAlwaysListening() {
-    if (alwaysListeningRef.current) {
-      alwaysListeningRef.current = false;
-      setAlwaysListening(false);
+  function toggleMicrophone() {
+    if (listeningRef.current) {
+      listeningRef.current = false;
       setListening(false);
       if (restartTimer.current) clearTimeout(restartTimer.current);
       recognition.current?.stop();
-      setStatus("SYSTEM ONLINE");
       return;
     }
-
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Speech) {
-      setError("Always listening is not supported in this browser. Please use Chrome or Edge.");
+      setError("Voice input is not supported here. Please open JARVIS in Chrome or Edge and allow microphone access.");
       return;
     }
-
     const instance = new Speech();
     instance.lang = "en-US";
     instance.continuous = true;
@@ -164,114 +134,63 @@ export default function Home() {
     instance.onresult = (event) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (!result?.[0] || !result.isFinal) continue;
-        const heard = result[0].transcript.trim();
-        const wakeMatch = heard.match(/\b(?:hey\s+)?jarvis\b[:,.!]?\s*/i);
-        if (!wakeMatch) continue;
-        const command = heard.slice(wakeMatch[0].length).trim();
-        if (command) {
-          void sendMessage(command);
-        } else {
-          speak("I'm listening. How can I help?");
-          setStatus("JARVIS IS LISTENING");
+        if (result?.isFinal) {
+          const spoken = result[0]?.transcript?.trim();
+          if (spoken) void sendMessage(spoken);
         }
       }
     };
     instance.onerror = (event) => {
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        alwaysListeningRef.current = false;
-        setAlwaysListening(false);
+        listeningRef.current = false;
         setListening(false);
-        setStatus("MICROPHONE PERMISSION NEEDED");
-        setError("Microphone permission was denied. Allow microphone access in your browser's site settings, then try again.");
-      } else if (event.error !== "no-speech" && event.error !== "aborted") {
-        setError("Voice recognition paused. Check your connection and microphone permission.");
+        setError("Please allow microphone access in your browser settings, then tap the microphone again.");
       }
     };
     instance.onend = () => {
-      if (!alwaysListeningRef.current) {
-        setListening(false);
-        return;
-      }
+      if (!listeningRef.current) return;
       if (restartTimer.current) clearTimeout(restartTimer.current);
       restartTimer.current = setTimeout(() => {
-        if (!alwaysListeningRef.current) return;
-        try { instance.start(); } catch { /* The browser may still be closing the previous recognition session. */ }
-      }, 700);
+        if (listeningRef.current) {
+          try { instance.start(); } catch { /* Browser may still be closing the previous session. */ }
+        }
+      }, 650);
     };
-
     recognition.current?.stop();
     recognition.current = instance;
-    alwaysListeningRef.current = true;
-    setAlwaysListening(true);
+    listeningRef.current = true;
     setListening(true);
     setError("");
-    setStatus("WAKE WORD ACTIVE");
-    try {
-      instance.start();
-    } catch {
-      alwaysListeningRef.current = false;
-      setAlwaysListening(false);
+    try { instance.start(); }
+    catch {
+      listeningRef.current = false;
       setListening(false);
-      setError("Could not start always listening. Check microphone permission and try again.");
-      setStatus("SYSTEM ONLINE");
+      setError("Could not start the microphone. Please check its permission and try again.");
     }
   }
 
   return (
-    <main className="shell">
-      <header className="topbar">
-        <a className="brand" href="#"><span className="brand-mark"><AudioLines size={21}/></span><span>J.A.R.V.I.S.<small>GEMINI INTELLIGENCE</small></span></a>
-        <div className="top-status"><span className="pulse-dot"/> SECURE SESSION <i/> <span className="online-text">ONLINE</span></div>
-        <button className="icon-button" aria-label={voiceOn ? "Mute voice" : "Enable voice"} onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) window.speechSynthesis?.cancel(); }} title="Voice output">{voiceOn ? <Volume2 size={18}/> : <VolumeX size={18}/>}</button>
-      </header>
-
-      <section className="hero">
-        <div className="eyebrow"><span/> PERSONAL ARTIFICIAL INTELLIGENCE</div>
-        <h1>At your service<span>.</span></h1>
-        <p className="subtitle">Your world, intelligently connected.</p>
-        <div className="video-call-wrap">
-          <div className="video-call-top"><span><i className="live-dot"/> LIVE ASSISTANT LINK</span><span>JARVIS · PRIVATE SESSION</span></div>
-          <div className={`video-stage ${speaking ? "speaking" : ""} ${busy ? "processing" : ""}`}>
-            <div className="avatar-halo"/>
-            <div className="cinematic-avatar" aria-label="Animated illustrated male JARVIS avatar">
-              <div className="avatar-back-glow"/>
-              <div className="avatar-body"><div className="avatar-jacket-left"/><div className="avatar-shirt"/><div className="avatar-jacket-right"/><div className="avatar-neck"/></div>
-              <div className="avatar-head"><div className="avatar-hair"/><div className="avatar-ear left"/><div className="avatar-ear right"/><div className="avatar-brow left"/><div className="avatar-brow right"/><div className="avatar-eye left"/><div className="avatar-eye right"/><div className="avatar-nose"/><div className="avatar-mouth"/></div>
-              <div className="avatar-phone"><span/><i/><b/></div>
-              <div className="avatar-hand"/>
-            </div>
-            <div className="avatar-nameplate"><span className="avatar-online"/> JARVIS <small>AI ASSISTANT</small></div>
-            <div className={caption ? "live-caption visible" : "live-caption"} aria-live="polite">{caption}</div>
-            <div className="video-status">{speaking ? "JARVIS IS SPEAKING" : listening || alwaysListening ? "LISTENING FOR YOUR VOICE" : busy ? "THINKING…" : "READY TO CONNECT"}</div>
-          </div>
-          <div className="video-call-controls"><span className="call-control"><Mic size={15}/></span><span className="call-label">VOICE SESSION</span><span className="call-control end-call"><Volume2 size={15}/></span></div>
-        </div>
-        <div className="metrics">
-          <div><span><Activity size={14}/> SYSTEM</span><strong>{status}</strong></div>
-          <div><span><Cpu size={14}/> INTELLIGENCE</span><strong>GEMINI AI</strong></div>
-          <div><span><ShieldCheck size={14}/> SECURITY</span><strong>KEY PROTECTED</strong></div>
-          <div><span><Wifi size={14}/> NETWORK</span><strong>CONNECTED</strong></div>
-        </div>
-      </section>
-
-      <section className="console">
-        <div className="console-head"><div><span className="console-light"/> JARVIS CONSOLE</div><span>ENCRYPTED CHANNEL <ShieldCheck size={13}/></span><button type="button" className={alwaysListening ? "always-button active" : "always-button"} onClick={toggleAlwaysListening}>{alwaysListening ? "PAUSE ALWAYS LISTENING" : "ENABLE ALWAYS LISTENING"}</button><button type="button" className="clear-button" onClick={clearConversation} disabled={busy} title="Clear saved conversation"><Trash2 size={13}/> CLEAR CHAT</button></div>
-        <div className="conversation">
-          {messages.length === 0 && <div className="welcome"><Bot size={25}/><div><strong>Good day. I am JARVIS.</strong><p>Gemini intelligence is standing by. What can I help you with?</p></div></div>}
-          {messages.map((message, index) => <div className={`message ${message.role}`} key={index}><span>{message.role === "user" ? "YOU" : "JARVIS"}</span><p>{message.content}</p></div>)}
-          {busy && <div className="thinking"><span/><span/><span/> JARVIS IS THINKING</div>}
-          {error && <div className="error-msg">{error}</div>}
-          <div ref={bottom}/>
-        </div>
-        <form className="composer" onSubmit={e => { e.preventDefault(); void sendMessage(); }}>
-          <button type="button" className={listening && !alwaysListening ? "mic-button listening" : "mic-button"} onClick={toggleMic} aria-label="Speak to JARVIS">{listening ? <MicOff size={19}/> : <Mic size={19}/>}</button>
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder="Message JARVIS or use your voice..." aria-label="Message JARVIS"/>
-          <button className="send-button" type="submit" disabled={busy || !input.trim()} aria-label="Send message"><Send size={18}/></button>
-        </form>
-        <div className="console-foot"><span><Zap size={12}/> POWERED BY GOOGLE GEMINI</span><span>{alwaysListening ? "SAY HEY JARVIS TO GIVE A COMMAND" : "MICROPHONE PERMISSION REQUIRED"}</span></div>
-      </section>
-      <footer>J.A.R.V.I.S. <span>•</span> JUST A RATHER VERY INTELLIGENT SYSTEM <span>•</span> PERSONAL ASSISTANT</footer>
+    <main className="call-screen">
+      <img className="jarvis-photo" src="/jarvis-avatar.webp" alt="JARVIS" />
+      <div className="photo-shade" />
+      <div className="call-topline"><span className="call-live-dot" /> JARVIS <span className="call-private">PRIVATE VIDEO SESSION</span></div>
+      <div className="caption-area" aria-live="polite" aria-atomic="true">
+        {caption && <span className="spoken-word" style={{ color: captionColor }}>{caption}</span>}
+      </div>
+      {error && <div className="voice-error" role="status">{error}</div>}
+      <div className="mic-area">
+        <button
+          type="button"
+          className={listening ? "main-mic active" : "main-mic"}
+          onClick={toggleMicrophone}
+          aria-label={listening ? "Stop hands-free listening" : "Start hands-free listening"}
+          title={listening ? "Tap to stop listening" : "Tap to talk to JARVIS"}
+        >
+          {listening ? <MicOff size={29} strokeWidth={2.1} /> : <Mic size={29} strokeWidth={2.1} />}
+        </button>
+        <span className="mic-hint">{listening ? (busy ? "JARVIS IS THINKING" : "LISTENING · TAP TO PAUSE") : "TAP TO TALK"}</span>
+      </div>
+      <span className="screen-reader-status">{busy ? "JARVIS is preparing a reply" : listening ? "Microphone is listening" : "JARVIS is ready"}</span>
     </main>
   );
 }
